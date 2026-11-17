@@ -190,8 +190,192 @@
         ['charge', 'Charge répartie', 0, 0, 0, 'uni', '', [['uni', 'Sur toute la portée (funiculaire de la parabole)'], ['demi', 'Sur la moitié gauche (non funiculaire)']]],
         ['q', 'Charge q (projection horizontale)', 0, 100, 1, 20, 'kN/m'], ['P', 'Charge ponctuelle au quart', 0, 300, 5, 0, 'kN']],
       build: p => arcCase(p)
+    },
+    voile: {
+      label: 'Voile ou mur percé', group: 'Voile',
+      svg: '<path d="M8 4 H44 V27 H8 Z" fill="#e7e6e1"/><path d="M18 11 H28 V27 H18 Z M34 9 H40 V16 H34 Z" fill="#fff"/><path d="M4 27 H48"/>',
+      params: [['W', 'Largeur', 2, 14, 0.25, 7, 'm'], ['H', 'Hauteur', 1.5, 10, 0.25, 4, 'm'], ['t', 'Épaisseur', 0.1, 0.6, 0.02, 0.2, 'm'],
+        ['mat', 'Matériau', 0, 0, 0, 'beton', '', [['beton', 'Béton (élastique linéaire)'], ['maconnerie', 'Maçonnerie']]],
+        ['nOuv', 'Ouvertures', 0, 0, 0, '1', '', [['0', 'Aucune'], ['1', 'Une ouverture'], ['2', 'Deux ouvertures']]],
+        ['o1x', 'Ouverture 1 : position x', 0, 12, 0.1, 2.5, 'm'], ['o1y', 'Ouverture 1 : allège', 0, 8, 0.1, 0, 'm'], ['o1w', 'Ouverture 1 : largeur', 0.3, 6, 0.1, 1.2, 'm'], ['o1h', 'Ouverture 1 : hauteur', 0.3, 8, 0.1, 2.2, 'm'],
+        ['o2x', 'Ouverture 2 : position x', 0, 12, 0.1, 5, 'm'], ['o2y', 'Ouverture 2 : allège', 0, 8, 0.1, 1, 'm'], ['o2w', 'Ouverture 2 : largeur', 0.3, 6, 0.1, 1, 'm'], ['o2h', 'Ouverture 2 : hauteur', 0.3, 8, 0.1, 1.2, 'm'],
+        ['q', 'Charge répartie en tête', 0, 300, 5, 60, 'kN/m'], ['P', 'Charge ponctuelle en tête', 0, 1000, 10, 0, 'kN'], ['xP', 'Position de P', 0, 14, 0.1, 3.1, 'm'],
+        ['pp', 'Poids propre', 0, 0, 0, 'oui', '', [['oui', 'Pris en compte'], ['non', 'Ignoré']]],
+        ['carte', 'Carte de couleur', 0, 0, 0, 'aucune', '', [['aucune', 'Aucune'], ['s1', 'σ₁ (traction en rouge)'], ['s2', 'σ₂ (compression en bleu)']]],
+        ['ne', 'Finesse du maillage (éléments)', 500, 4000, 100, 2000, '']],
+      hide: p => [...(p.nOuv === '0' ? ['o1x', 'o1y', 'o1w', 'o1h'] : []), ...(p.nOuv !== '2' ? ['o2x', 'o2y', 'o2w', 'o2h'] : [])],
+      build: p => voileCase(p)
     }
   };
+
+  // ------------------------------------------------------------------ voile : éléments finis Q4 en contraintes planes
+  const GP = [-1 / Math.sqrt(3), 1 / Math.sqrt(3)];
+  const NODE_XI = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+  const dElastic = (E, nu) => { const c = E / (1 - nu * nu); return [c, c * nu, 0, c * nu, c, 0, 0, 0, c * (1 - nu) / 2]; };
+  // matrice B (3 × 8) d'un rectangle a × b au point (ξ, η)
+  function bMat(a, b, xi, eta) {
+    const B = new Float64Array(24);
+    NODE_XI.forEach(([xi_i, eta_i], n) => {
+      const dx = xi_i * (1 + eta * eta_i) / 4 * 2 / a, dy = eta_i * (1 + xi * xi_i) / 4 * 2 / b;
+      B[2 * n] = dx; B[8 + 2 * n + 1] = dy; B[16 + 2 * n] = dy; B[16 + 2 * n + 1] = dx;
+    });
+    return B;
+  }
+  // raideur élémentaire (8 × 8), intégration 2 × 2
+  function kElem(a, b, t, D) {
+    const K = new Float64Array(64), w = a * b / 4 * t;
+    for (const xi of GP) for (const eta of GP) {
+      const B = bMat(a, b, xi, eta), DB = new Float64Array(24);
+      for (let r = 0; r < 3; r++) for (let c = 0; c < 8; c++) DB[r * 8 + c] = D[r * 3] * B[c] + D[r * 3 + 1] * B[8 + c] + D[r * 3 + 2] * B[16 + c];
+      for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) K[i * 8 + j] += (B[i] * DB[j] + B[8 + i] * DB[8 + j] + B[16 + i] * DB[16 + j]) * w;
+    }
+    return K;
+  }
+  // Cholesky en bande : A[i][k] stocké en A[i·(bw+1) + k], k = j − i ∈ [0, bw]
+  function bandSolve(A, n, bw, F) {
+    const W = bw + 1;
+    for (let i = 0; i < n; i++) {
+      for (let k = Math.max(0, i - bw); k < i; k++) {
+        const lki = A[k * W + (i - k)];
+        if (lki === 0) continue;
+        const f = lki / A[k * W];
+        const jmax = Math.min(n - 1, k + bw);
+        for (let j = i; j <= jmax; j++) A[i * W + (j - i)] -= f * A[k * W + (j - k)];
+      }
+    }
+    const x = Float64Array.from(F);
+    for (let i = 0; i < n; i++) { for (let k = Math.max(0, i - bw); k < i; k++) x[i] -= A[k * W + (i - k)] / A[k * W] * x[k]; }
+    for (let i = n - 1; i >= 0; i--) { let s = x[i]; for (let j = i + 1; j <= Math.min(n - 1, i + bw); j++) s -= A[i * W + (j - i)] * x[j]; x[i] = s / A[i * W]; }
+    return x;
+  }
+
+  /* Maillage régulier nx × ny ; une maille est retirée si son centre tombe dans une ouverture. Pied encastré
+     (déplacements nuls), charges en tête et poids propre. Retourne les contraintes par élément. */
+  function solveWall(geo, Dfor) {
+    const { W, H, t, nx, ny, active, q, P, xP, gamma } = geo, a = W / nx, b = H / ny;
+    // numérotation selon la plus petite dimension pour réduire la largeur de bande
+    const colMajor = nx > ny;
+    const nid = (i, j) => (colMajor ? i * (ny + 1) + j : j * (nx + 1) + i);
+    const nn = (nx + 1) * (ny + 1), ndof = 2 * nn, bw = 2 * (colMajor ? ny + 2 : nx + 2) + 1, Wd = bw + 1;
+    const K = new Float64Array(ndof * Wd), F = new Float64Array(ndof), used = new Uint8Array(nn);
+    const conn = (i, j) => [nid(i, j), nid(i + 1, j), nid(i + 1, j + 1), nid(i, j + 1)];
+    const kCache = new Map();
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const e = j * nx + i;
+      if (!active[e]) continue;
+      const D = Dfor(e), key = D.join(',');
+      let ke = kCache.get(key);
+      if (!ke) { ke = kElem(a, b, t, D); if (kCache.size < 4000) kCache.set(key, ke); }
+      const ns = conn(i, j), dofs = ns.flatMap(n => [2 * n, 2 * n + 1]);
+      ns.forEach(n => (used[n] = 1));
+      for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+        const I = dofs[r], J = dofs[c];
+        if (J >= I) K[I * Wd + (J - I)] += ke[r * 8 + c];
+      }
+      if (gamma) ns.forEach(n => (F[2 * n + 1] -= gamma * t * a * b / 4));
+    }
+    // charges en tête : répartie (sur les mailles actives de la rangée supérieure) et ponctuelle
+    for (let i = 0; i < nx; i++) if (active[(ny - 1) * nx + i]) { F[2 * nid(i, ny) + 1] -= q * a / 2; F[2 * nid(i + 1, ny) + 1] -= q * a / 2; }
+    if (P) F[2 * nid(Math.max(0, Math.min(nx, Math.round(xP / a))), ny) + 1] -= P;
+    // conditions aux limites : pied bloqué, nœuds sans matière neutralisés
+    const fix = d => { for (let k = 1; k < Wd; k++) K[d * Wd + k] = 0; for (let r = Math.max(0, d - bw); r < d; r++) K[r * Wd + (d - r)] = 0; K[d * Wd] = 1; F[d] = 0; };
+    for (let i = 0; i <= nx; i++) { fix(2 * nid(i, 0)); fix(2 * nid(i, 0) + 1); }
+    for (let n = 0; n < nn; n++) if (!used[n]) { fix(2 * n); fix(2 * n + 1); }
+    const Fext = Float64Array.from(F);
+    const u = bandSolve(K, ndof, bw, F);
+    // contraintes au centre de chaque élément
+    const B0 = bMat(a, b, 0, 0), sig = new Float64Array(nx * ny * 3);
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const e = j * nx + i;
+      if (!active[e]) continue;
+      const ue = conn(i, j).flatMap(n => [u[2 * n], u[2 * n + 1]]), D = Dfor(e);
+      const ex = B0.slice(0, 8).reduce((s, v, k) => s + v * ue[k], 0), ey = B0.slice(8, 16).reduce((s, v, k) => s + v * ue[k], 0), gxy = B0.slice(16).reduce((s, v, k) => s + v * ue[k], 0);
+      sig[3 * e] = D[0] * ex + D[1] * ey + D[2] * gxy; sig[3 * e + 1] = D[3] * ex + D[4] * ey + D[5] * gxy; sig[3 * e + 2] = D[6] * ex + D[7] * ey + D[8] * gxy;
+    }
+    let load = 0;
+    for (let n = 0; n < nn; n++) if (used[n]) load -= Fext[2 * n + 1];
+    return { sig, u, load, a, b };
+  }
+
+  function voileCase(p) {
+    const W = p.W, H = p.H, t = p.t, beton = p.mat === 'beton';
+    const ratio = Math.sqrt(p.ne * W / H), nx = Math.max(8, Math.round(ratio)), ny = Math.max(6, Math.round(p.ne / nx));
+    const ops = [];
+    if (+p.nOuv >= 1) ops.push([p.o1x, p.o1y, p.o1w, p.o1h]);
+    if (+p.nOuv >= 2) ops.push([p.o2x, p.o2y, p.o2w, p.o2h]);
+    const a = W / nx, b = H / ny, active = new Uint8Array(nx * ny).fill(1);
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const cx = (i + 0.5) * a, cy = (j + 0.5) * b;
+      if (ops.some(([ox, oy, ow, oh]) => cx > ox && cx < ox + ow && cy > oy && cy < oy + oh)) active[j * nx + i] = 0;
+    }
+    const E = beton ? 30e6 : 3e6, nu = 0.2, gamma = p.pp === 'oui' ? (beton ? 25 : 18) : 0;
+    const D0 = dElastic(E, nu);
+    const geo = { W, H, t, nx, ny, active, q: p.q, P: p.P, xP: Math.min(p.xP, W), gamma };
+    const res = solveWall(geo, () => D0);
+    return wallResult(p, geo, res, ops, { E, nu, beton });
+  }
+
+  // champ aux nœuds (moyenne des éléments voisins), carte de couleur, vérifications
+  function wallResult(p, geo, res, ops, mat, extra = {}) {
+    const { W, H, t, nx, ny, active } = geo, { sig } = res;
+    const F = makeField(0, 0, W, H, nx, ny), cnt = new Float64Array((nx + 1) * (ny + 1));
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const e = j * nx + i;
+      F.cell[e] = active[e];
+      if (!active[e]) continue;
+      [[i, j], [i + 1, j], [i + 1, j + 1], [i, j + 1]].forEach(([ii, jj]) => {
+        const k = jj * (nx + 1) + ii;
+        F.sx[k] += sig[3 * e]; F.sy[k] += sig[3 * e + 1]; F.txy[k] += sig[3 * e + 2]; cnt[k]++;
+      });
+    }
+    for (let k = 0; k < cnt.length; k++) if (cnt[k]) { F.sx[k] /= cnt[k]; F.sy[k] /= cnt[k]; F.txy[k] /= cnt[k]; }
+    // principales par élément
+    const s1 = new Float64Array(nx * ny), s2 = new Float64Array(nx * ny);
+    for (let e = 0; e < nx * ny; e++) if (active[e]) { const pr = principal([sig[3 * e], sig[3 * e + 1], sig[3 * e + 2]]); s1[e] = pr.s1; s2[e] = pr.s2; }
+    const holes = ops.map(([ox, oy, ow, oh]) => [[ox, oy], [ox + ow, oy], [ox + ow, oy + oh], [ox, oy + oh]]);
+    // vérifications
+    const checks = [];
+    const applied = p.q * W + (p.P || 0) + (p.pp === 'oui' ? (mat.beton ? 25 : 18) * t * (W * H - ops.reduce((s, o) => s + o[2] * o[3], 0)) : 0);
+    checks.push({ label: 'Équilibre : charges appliquées (q, P, poids propre) = somme des réactions en pied', val: `${S.fmt(res.load, 1)} kN / ${S.fmt(applied, 1)} kN`, ok: Math.abs(res.load - applied) / (applied || 1) < 0.03 });
+    if (!ops.length && !(p.P > 0) && p.pp !== 'oui' && p.q > 0) {
+      const k = Math.round(ny / 2) * (nx + 1) + Math.round(nx / 2), ref = -p.q / t;
+      checks.push({ label: 'Sans ouverture, charge répartie seule : σy uniforme à mi-hauteur = −q/t', val: `${S.fmt(F.sy[k], 0)} / ${S.fmt(ref, 0)} kPa`, ok: Math.abs(F.sy[k] / ref - 1) < 0.02 });
+    }
+    if (ops.length && p.q > 0) {
+      let smin = 0;
+      for (let e = 0; e < nx * ny; e++) if (active[e]) smin = Math.min(smin, s2[e]);
+      const nom = -(p.q * W) / (t * (W - ops.reduce((s, o) => s + o[2], 0)));
+      checks.push({ label: 'Concentration aux angles des ouvertures : σ₂,min / contrainte moyenne dans les trumeaux (référence : ≈ 3 pour un trou circulaire, davantage aux angles vifs, valeur dépendant du maillage)', val: `${S.fmt(smin / nom, 1)}`, ok: true });
+    }
+    // carte de couleur par élément
+    let map = null;
+    if (p.carte !== 'aucune') {
+      const arr = p.carte === 's1' ? s1 : s2;
+      let m = 0; for (let e = 0; e < arr.length; e++) m = Math.max(m, Math.abs(arr[e]));
+      map = (X, Y, k) => {
+        const g = sv('g', { class: 'lc-map' });
+        for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+          const e = j * nx + i;
+          if (!active[e]) continue;
+          const v = arr[e] / (m || 1), op = Math.min(1, Math.abs(v)) * 0.75;
+          if (op < 0.03) continue;
+          g.append(sv('rect', { x: X(i * res.a).toFixed(1), y: Y((j + 1) * res.b).toFixed(1), width: (res.a * k + 0.6).toFixed(1), height: (res.b * k + 0.6).toFixed(1), fill: v > 0 ? '#e2463f' : '#2f6fd6', 'fill-opacity': op.toFixed(2) }));
+        }
+        return g;
+      };
+    }
+    const ground = (X, Y) => {
+      const g = sv('g', { class: 'lc-ground' });
+      g.append(sv('path', { d: `M${X(0) - 10} ${Y(0)} H${X(W) + 10}`, class: 'lc-sup' }));
+      for (let x = 0; x <= W + 1e-9; x += W / Math.max(6, Math.round(W * 3))) g.append(sv('path', { d: `M${X(x)} ${Y(0)} l-7 9`, class: 'lc-sup' }));
+      if (extra.overlay) g.append(extra.overlay(X, Y));
+      return g;
+    };
+    const legend = [p.carte !== 'aucune' ? el('span', {}, `Carte : ${p.carte === 's1' ? 'σ₁' : 'σ₂'} par élément (intensité relative)`) : null, ...(extra.legend || [])];
+    return Object.assign({ F, outline: [[[0, 0], [W, 0], [W, H], [0, H]]], holes, h: H, L: W, supports: [], map, extra: ground,
+      loads: { q: p.q, top: H, x0: 0, x1: W, P: p.P > 0 ? [[Math.min(p.xP, W), p.P]] : [] }, checks: checks.concat(extra.checks || []), legend,
+      info: `${nx} × ${ny} éléments Q4, ${2 * (nx + 1) * (ny + 1)} inconnues` + (extra.info ? ' — ' + extra.info : ''), s1, s2, geo }, extra.more || {});
+  }
 
   /* Arc : efforts du solveur le long de l'axe (repère local s le long de l'axe, n vers l'extrados), puis
      σs = N/A − M·n/I, τsn = −1,5·V/A·(1 − 4n²/h²), σn = 0, et rotation dans le repère global :
@@ -411,7 +595,9 @@
     function renderSide() {
       const c = CASES[st.cas], p = params[st.cas];
       dom.params.innerHTML = '';
+      const hidden = c.hide ? c.hide(p) : [];
       c.params.forEach(([k, label, min, max, step, , unit, opts]) => {
+        if (hidden.includes(k)) return;
         if (opts) {
           const s = el('select', { onchange: e => { p[k] = e.target.value; persist(); renderSide(); later(); } }, opts.map(([v, l]) => el('option', { value: v, selected: p[k] === v }, l)));
           dom.params.append(el('label', { class: 'param' }, el('span', { class: 'lab' }, label), s));
