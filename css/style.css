@@ -802,33 +802,3 @@ svg.icon .hid { stroke: none; fill: none; }
 .lc-svg .lc-hinge { fill: var(--paper); stroke: var(--ink); stroke-width: 1.5; }
 .lc-svg .lc-crack { fill: rgba(226, 70, 63, .22); stroke: none; }
 .lc-svg .lc-arc60 { fill: none; stroke: #b0781f; stroke-width: 2; stroke-dasharray: 6 4; }
-/* Plaques (Roark) */
-.pl-ab { font-size: 12px; color: var(--muted); margin: -4px 0 10px; }
-.pl-field { display: grid; grid-template-columns: 1fr 96px 34px; gap: 6px; align-items: center; font-size: 13px; margin-bottom: 7px; }
-.pl-field:has(select) { grid-template-columns: 1fr; }
-.pl-field input, .pl-field select { font: inherit; padding: 4px 6px; border: 1px solid var(--line); min-width: 0; }
-.pl-field input { text-align: right; }
-.pl-field small { color: var(--muted); }
-.pl-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 16px; }
-.kpi.ko span { color: var(--c-red); }
-.pl-grid { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 20px; align-items: start; }
-.pl-plan { width: 100%; height: auto; display: block; }
-.pl-plan .pl-body { fill: #eceae4; }
-.pl-plan .pl-fx { stroke: var(--ink); stroke-width: 4; } .pl-plan .pl-hatch { stroke: var(--ink); stroke-width: 1; }
-.pl-plan .pl-ss { stroke: var(--ink); stroke-width: 1.6; } .pl-plan .pl-tri { fill: var(--paper); stroke: var(--ink); stroke-width: 1; }
-.pl-plan .pl-fr { stroke: #9a9994; stroke-width: 1.2; stroke-dasharray: 5 4; }
-.pl-plan .pl-dim { font-size: 12px; fill: var(--ink); }
-.pl-plan .pl-pt { stroke: var(--paper); stroke-width: 1.5; } .pl-plan .pl-pt.s { fill: var(--c-coral); } .pl-plan .pl-pt.y { fill: #2f8a4c; } .pl-plan .pl-pt.R { fill: var(--load); }
-.pl-plan .pl-ptl { font-size: 11px; font-weight: 700; fill: var(--ink); }
-.pl-legend { display: flex; gap: 16px; font-size: 12px; justify-content: center; margin-top: 4px; }
-.pl-legend .k::before { content: ''; display: inline-block; width: 22px; vertical-align: middle; margin-right: 6px; border-top: 1.6px solid var(--ink); }
-.pl-legend .k.fx::before { border-top-width: 4px; } .pl-legend .k.fr::before { border-top: 1.2px dashed #9a9994; }
-.pl-res td { font-size: 13px; vertical-align: top; } .pl-res td.pl-f { font-size: 12px; color: var(--ink-2); white-space: nowrap; }
-.pl-badge { display: inline-block; min-width: 20px; text-align: center; font-size: 11px; font-weight: 700; color: #fff; padding: 1px 4px; }
-.pl-badge.s { background: var(--c-coral); } .pl-badge.y { background: #2f8a4c; } .pl-badge.R { background: var(--load); }
-.pl-warn { font-size: 12.5px; color: #8a5a12; margin: 10px 0 0; padding-left: 18px; }
-.pl-large { margin-top: 22px; border-top: 1px solid var(--rule); padding-top: 12px; }
-.pl-large h3 { font-size: 16px; margin-bottom: 4px; } .pl-large p.muted { font-size: 12.5px; }
-.pl-tab { margin-top: 18px; font-size: 13px; } .pl-tab summary { cursor: pointer; font-weight: 700; }
-.pl-tab th.hl, .pl-tab td.hl { background: rgba(66, 132, 244, 0.1); }
-@media (max-width: 980px) { .pl-grid { grid-template-columns: minmax(0, 1fr); } .pl-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
