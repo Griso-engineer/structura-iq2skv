@@ -180,8 +180,119 @@
       params: [['L1', 'Portée L1', 2, 10, 0.5, 5, 'm'], ['L2', 'Portée L2', 2, 10, 0.5, 5, 'm'], ['h', 'Hauteur h', 0.3, 3, 0.05, 1.0, 'm'],
         ['b', 'Largeur b', 0.1, 1, 0.05, 0.3, 'm'], ['q', 'Charge répartie q', 0, 100, 1, 20, 'kN/m']],
       build: p => beamCase(Object.assign({}, p, { L: p.L1 + p.L2 }), [0, p.L1, p.L1 + p.L2], ['rotule', 'appui', 'appui'], [], [])
+    },
+    arc: {
+      label: 'Arc', group: 'Arc',
+      svg: '<path d="M4 25 Q26 -6 48 25" fill="none" stroke-width="4" stroke="#bdbcb7"/><path d="M4 25 Q26 -6 48 25" fill="none"/><path d="M4 25 l-3 4 h6 z M48 25 l-3 4 h6 z"/>',
+      params: [['L', 'Portée L', 6, 40, 1, 14, 'm'], ['f', 'Montée f', 1, 15, 0.25, 4, 'm'], ['h', 'Épaisseur h', 0.2, 2.5, 0.05, 1.0, 'm'], ['b', 'Largeur b', 0.1, 1, 0.05, 0.4, 'm'],
+        ['forme', 'Forme', 0, 0, 0, 'para', '', [['para', 'Parabolique'], ['circ', 'Circulaire']]],
+        ['appuis', 'Liaisons', 0, 0, 0, 'arc', '', [['arc', 'Deux articulations'], ['arc-3art', 'Trois articulations'], ['arc-encastre', 'Encastré']]],
+        ['charge', 'Charge répartie', 0, 0, 0, 'uni', '', [['uni', 'Sur toute la portée (funiculaire de la parabole)'], ['demi', 'Sur la moitié gauche (non funiculaire)']]],
+        ['q', 'Charge q (projection horizontale)', 0, 100, 1, 20, 'kN/m'], ['P', 'Charge ponctuelle au quart', 0, 300, 5, 0, 'kN']],
+      build: p => arcCase(p)
     }
   };
+
+  /* Arc : efforts du solveur le long de l'axe (repère local s le long de l'axe, n vers l'extrados), puis
+     σs = N/A − M·n/I, τsn = −1,5·V/A·(1 − 4n²/h²), σn = 0, et rotation dans le repère global :
+     σx = c²σs − 2cs·τ, σy = s²σs + 2cs·τ, τxy = cs·σs + (c² − s²)·τ. */
+  function arcCase(p) {
+    const { L, h, b } = p, E = 30000;
+    const pp = Object.assign(S.presetDefaults(p.appuis), { L, f: p.f, forme: p.forme, q: p.q, P: p.P });
+    const model = S.PRESET[p.appuis].build(pp);
+    if (p.forme === 'circ' && pp.f !== p.f) p.f = pp.f;            // montée limitée au demi-cercle
+    model.elems.forEach(e => Object.assign(e, custom(b, h, E)));
+    if (p.charge === 'demi') model.eloads = model.eloads.filter(l => l.type !== 'udl' || model.nodes[model.elems[l.elem - 1].n2 - 1].x <= L / 2 + 1e-6);
+    const r = S.fem.solve(model);
+    if (!r.ok) return { error: 'Système instable.' };
+    /* Échantillons de l'axe : position, tangente exacte de la courbe (le modèle est une ligne brisée de
+       16 barres, dont la tangente saute de quelques degrés à chaque nœud), efforts projetés sur cette
+       tangente (N le long de l'axe, V selon la normale), abscisse curviligne. */
+    const f = p.f, Rc = (L * L / 4 + f * f) / (2 * f), yc = f - Rc;
+    const tangent = (x, y) => {
+      if (p.forme === 'circ') { const tx = y - yc, ty = -(x - L / 2), l = Math.hypot(tx, ty); return [tx / l, ty / l]; }
+      const d = 4 * f * (L - 2 * x) / (L * L), l = Math.hypot(1, d); return [1 / l, d / l];
+    };
+    const smp = [];
+    let sCum = 0;
+    r.elems.forEach(e => {
+      const n1 = model.nodes[model.elems[e.index - 1].n1 - 1];
+      e.xs.forEach((x, k) => {
+        const px = n1.x + e.c * x, py = n1.y + e.s * x;
+        if (smp.length) sCum += Math.hypot(px - smp[smp.length - 1].x, py - smp[smp.length - 1].y);
+        const [tc, ts] = tangent(px, py);
+        const gx = e.N[k] * e.c + e.V[k] * e.s, gy = e.N[k] * e.s - e.V[k] * e.c;   // effort résultant (repère global)
+        smp.push({ x: px, y: py, c: tc, s: ts, N: gx * tc + gy * ts, V: gx * ts - gy * tc, M: e.M[k], sc: sCum });
+      });
+    });
+    const S_ = sCum, ymax = Math.max(...smp.map(q => q.y));
+    const nx = 260, ny = Math.max(40, Math.round(nx * (ymax + h) / (L + h)));
+    const F = makeField(-h * 0.6, -h * 0.6, L + h * 0.6, ymax + h * 0.6, nx, ny);
+    const A = b * h, I = b * h ** 3 / 12, valid = new Uint8Array((nx + 1) * (ny + 1));
+    // point de l'axe le plus proche : recherche sur les segments voisins en x
+    const nearest = (x, y) => {
+      let best = null, bd = Infinity;
+      for (let m = 0; m < smp.length - 1; m++) {
+        const a = smp[m], c = smp[m + 1];
+        if (Math.min(a.x, c.x) > x + h || Math.max(a.x, c.x) < x - h) continue;
+        const ex = c.x - a.x, ey = c.y - a.y, l2 = ex * ex + ey * ey || 1e-12;
+        const t = Math.max(0, Math.min(1, ((x - a.x) * ex + (y - a.y) * ey) / l2));
+        const qx = a.x + t * ex, qy = a.y + t * ey, d = (x - qx) ** 2 + (y - qy) ** 2;
+        if (d < bd) { bd = d; best = { a, c, t, qx, qy, m }; }
+      }
+      return best;
+    };
+    for (let j = 0; j <= ny; j++) for (let i = 0; i <= nx; i++) {
+      const x = F.x0 + i * F.dx, y = F.y0 + j * F.dy, k = j * (nx + 1) + i;
+      const q = nearest(x, y);
+      if (!q) continue;
+      const { a, c, t } = q, lerp = key => a[key] + (c[key] - a[key]) * t;
+      const tl = Math.hypot(lerp('c'), lerp('s')) || 1, cs = lerp('c') / tl, sn = lerp('s') / tl;
+      // hors des extrémités de l'axe : pas de matière
+      if ((q.m === 0 && t <= 0) || (q.m === smp.length - 2 && t >= 1)) continue;
+      const n = (x - q.qx) * -sn + (y - q.qy) * cs;
+      if (Math.abs(n) > h / 2 + 1e-9) continue;
+      const N = lerp('N'), V = lerp('V'), M = lerp('M');
+      const ss = N / A - M * n / I, tau = -1.5 * V / A * (1 - 4 * n * n / (h * h));
+      F.sx[k] = cs * cs * ss - 2 * cs * sn * tau; F.sy[k] = sn * sn * ss + 2 * cs * sn * tau; F.txy[k] = cs * sn * ss + (cs * cs - sn * sn) * tau;
+      valid[k] = 1;
+    }
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const k = j * (nx + 1) + i;
+      F.cell[j * nx + i] = valid[k] && valid[k + 1] && valid[k + nx + 1] && valid[k + nx + 2] ? 1 : 0;
+    }
+    // contour : extrados et intrados ; zones de perturbation sur une longueur d'arc h
+    const off = (q, d) => [q.x - q.s * d, q.y + q.c * d];
+    const outline = [[...smp.map(q => off(q, h / 2)), ...smp.slice().reverse().map(q => off(q, -h / 2))]];
+    const band = (s0, s1) => { const part = smp.filter(q => q.sc >= s0 && q.sc <= s1); return part.length > 1 ? [...part.map(q => off(q, h / 2)), ...part.slice().reverse().map(q => off(q, -h / 2))] : null; };
+    const sAtX = x => { const q = smp.reduce((m, v) => (Math.abs(v.x - x) < Math.abs(m.x - x) ? v : m)); return q.sc; };
+    const zones = [band(0, h), band(S_ - h, S_)];
+    if (p.P > 0) { const s4 = sAtX(L / 4); zones.push(band(s4 - h, s4 + h)); }
+    if (p.appuis === 'arc-3art') { const s2 = sAtX(L / 2); zones.push(band(s2 - h, s2 + h)); }
+    const yAt = x => { const q = smp.reduce((m, v) => (Math.abs(v.x - x) < Math.abs(m.x - x) ? v : m)); return q.y + h / 2; };
+    const sups = model.nodes.filter(n => n.sup !== 'libre').map(n => Object.assign({}, n, { sy: n.y - h / 2 }));
+    // vérification : charge funiculaire → trajectoires de compression parallèles à l'axe
+    const funi = p.forme === 'para' && p.charge === 'uni' && !(p.P > 0);
+    const inZone = sc => sc < h || sc > S_ - h || (p.appuis === 'arc-3art' && Math.abs(sc - sAtX(L / 2)) < h);
+    let dev = 0, eMax = 0;
+    smp.forEach(q => {
+      if (inZone(q.sc)) return;
+      eMax = Math.max(eMax, Math.abs(q.M / (q.N || 1e-9)));
+      const tt = tensorAt(F, q.x, q.y);
+      if (!tt) return;
+      const pr = principal(tt), a2 = pr.th + Math.PI / 2;
+      const d = Math.abs(Math.atan2(Math.sin(a2) * q.c - Math.cos(a2) * q.s, Math.cos(a2) * q.c + Math.sin(a2) * q.s));
+      dev = Math.max(dev, Math.min(d, Math.PI - d) * 180 / Math.PI);
+    });
+    const checks = [funi
+      ? { label: 'Charge funiculaire : trajectoires de compression parallèles à l\'axe (écart maximal hors zones)', val: `${S.fmt(dev, 2)}°`, ok: dev < 1 }
+      : { label: 'Charge non funiculaire : écart des trajectoires de compression à l\'axe (hors zones)', val: `${S.fmt(dev, 1)}°`, ok: true },
+      { label: 'Excentricité maximale de la ligne des pressions e = M/N (noyau central : h/6)', val: `${S.fmt(eMax * 100, 1)} cm / ${S.fmt(h / 6 * 100, 1)} cm`, ok: eMax <= h / 6 + 1e-9 }];
+    return { F, zones: zones.filter(Boolean), outline, supports: sups, h, L, dsep: d => Math.max(h / (d * 0.28), L / 300),
+      hinges: p.appuis === 'arc-3art' ? [[L / 2, p.f]] : [],
+      loads: { q: p.q, topFn: yAt, x0: 0, x1: p.charge === 'demi' ? L / 2 : L, P: p.P > 0 ? [[L / 4, p.P]] : [] }, checks,
+      info: eMax > h / 6 ? 'la ligne des pressions sort du noyau central : une fibre est tendue' : 'ligne des pressions dans le noyau central : section entièrement comprimée' };
+  }
 
   /* Poutre droite : nœuds aux appuis et aux charges ponctuelles ; champ σx, τxy sur la grille (x, y). */
   function beamCase(p, xsup, sups, xP, _) {
@@ -257,24 +368,32 @@
         flush();
       });
     });
-    (c.zones || []).forEach(([a, b]) => {
-      g.append(sv('rect', { x: X(a), y: Y(c.h / 2), width: (b - a) * k, height: c.h * k, fill: 'url(#lc-hatch)', class: 'lc-zone' },
-        sv('title', {}, 'Zone de perturbation : théorie des poutres non valable ici')));
+    // zones de perturbation : rectangles [x0, x1] sur toute la hauteur (poutres) ou polygones (arc)
+    const zonePoly = poly => 'M' + poly.map(p => `${X(p[0]).toFixed(1)} ${Y(p[1]).toFixed(1)}`).join('L') + 'Z';
+    (c.zones || []).forEach(z => {
+      const attrs = Array.isArray(z[0]) ? { d: zonePoly(z) } : { d: zonePoly([[z[0], -c.h / 2], [z[1], -c.h / 2], [z[1], c.h / 2], [z[0], c.h / 2]]) };
+      g.append(sv('path', Object.assign(attrs, { fill: 'url(#lc-hatch)', class: 'lc-zone' }), sv('title', {}, 'Zone de perturbation : théorie des poutres non valable ici')));
     });
     if (c.extra) g.append(c.extra(X, Y, k));
     // appuis et charges
     (c.supports || []).forEach(n => {
-      const x = X(n.x), y = Y(c.supY != null ? c.supY : -c.h / 2);
-      if (n.sup === 'encastrement') g.append(sv('path', { class: 'lc-sup', d: `M${x} ${y - c.h * k / 2 - 10} V${y + 10} M${x} ${y - 4} l-7 7 M${x} ${y - c.h * k / 2 + 6} l-7 7 M${x} ${y - c.h * k / 4} l-7 7` }));
+      const x = X(n.x), y = Y(n.sy != null ? n.sy : c.supY != null ? c.supY : -c.h / 2);
+      if (n.sup === 'encastrement') g.append(sv('path', { class: 'lc-sup', d: n.sy != null ? `M${x - 16} ${y} H${x + 16} M${x - 12} ${y} l-6 7 M${x - 2} ${y} l-6 7 M${x + 8} ${y} l-6 7` : `M${x} ${y - c.h * k / 2 - 10} V${y + 10} M${x} ${y - 4} l-7 7 M${x} ${y - c.h * k / 2 + 6} l-7 7 M${x} ${y - c.h * k / 4} l-7 7` }));
       else g.append(sv('path', { class: 'lc-sup', d: `M${x} ${y} l-8 13 h16 z M${x - 12} ${y + 17} h24` }));
     });
+    (c.hinges || []).forEach(([x, y]) => g.append(sv('circle', { cx: X(x), cy: Y(y), r: 4.5, class: 'lc-hinge' })));
     const L = c.loads;
+    const top = x => (L.topFn ? L.topFn(x) : L.top);
     if (L && L.q > 0) {
-      const y = Y(L.top) - 4, n = Math.max(6, Math.round((L.x1 - L.x0) * k / 34));
-      for (let i = 0; i <= n; i++) { const x = X(L.x0 + (L.x1 - L.x0) * i / n); g.append(sv('path', { class: 'lc-load', d: `M${x} ${y - 20} V${y} M${x - 3.5} ${y - 6} L${x} ${y} L${x + 3.5} ${y - 6}` })); }
-      g.append(sv('path', { class: 'lc-load', d: `M${X(L.x0)} ${y - 20} H${X(L.x1)}` }));
+      const n = Math.max(6, Math.round((L.x1 - L.x0) * k / 34)), pts = [];
+      for (let i = 0; i <= n; i++) {
+        const xm = L.x0 + (L.x1 - L.x0) * i / n, x = X(xm), y = Y(top(xm)) - 4;
+        pts.push(`${x} ${y - 20}`);
+        g.append(sv('path', { class: 'lc-load', d: `M${x} ${y - 20} V${y} M${x - 3.5} ${y - 6} L${x} ${y} L${x + 3.5} ${y - 6}` }));
+      }
+      g.append(sv('path', { class: 'lc-load', d: 'M' + pts.join('L') }));
     }
-    (L && L.P || []).forEach(([x, P]) => { if (P > 0) { const xx = X(x), y = Y(L.top) - 4; g.append(sv('path', { class: 'lc-loadP', d: `M${xx} ${y - 34} V${y} M${xx - 5} ${y - 9} L${xx} ${y} L${xx + 5} ${y - 9}` })); } });
+    (L && L.P || []).forEach(([x, P]) => { if (P > 0) { const xx = X(x), y = Y(top(x)) - 4; g.append(sv('path', { class: 'lc-loadP', d: `M${xx} ${y - 34} V${y} M${xx - 5} ${y - 9} L${xx} ${y} L${xx + 5} ${y - 9}` })); } });
     return g;
   }
 
@@ -310,7 +429,7 @@
       const c = CASES[st.cas].build(params[st.cas]);
       dom.out.innerHTML = '';
       if (c.error) { dom.out.append(el('p', { class: 'note' }, c.error)); return; }
-      const F = c.F, span = Math.max(F.x1 - F.x0, F.y1 - F.y0), dsep = span / (st.dens * 2.2);
+      const F = c.F, span = Math.max(F.x1 - F.x0, F.y1 - F.y0), dsep = c.dsep ? c.dsep(st.dens) : span / (st.dens * 2.2);
       let smax = 0;
       for (let k = 0; k < F.sx.length; k++) smax = Math.max(smax, Math.abs(F.sx[k]), Math.abs(F.sy[k]), Math.abs(F.txy[k]));
       c.lines = { 1: st.fam1 ? trajectories(F, 1, dsep, { seeds: c.seeds && c.seeds.slice() }) : [], 2: st.fam2 ? trajectories(F, 2, dsep, { seeds: c.seeds && c.seeds.slice() }) : [] };
