@@ -526,14 +526,10 @@
       const k = j * (nx + 1) + i;
       F.cell[j * nx + i] = valid[k] && valid[k + 1] && valid[k + nx + 1] && valid[k + nx + 2] ? 1 : 0;
     }
-    // contour : extrados et intrados ; zones de perturbation sur une longueur d'arc h
+    // contour : extrados et intrados
     const off = (q, d) => [q.x - q.s * d, q.y + q.c * d];
     const outline = [[...smp.map(q => off(q, h / 2)), ...smp.slice().reverse().map(q => off(q, -h / 2))]];
-    const band = (s0, s1) => { const part = smp.filter(q => q.sc >= s0 && q.sc <= s1); return part.length > 1 ? [...part.map(q => off(q, h / 2)), ...part.slice().reverse().map(q => off(q, -h / 2))] : null; };
     const sAtX = x => { const q = smp.reduce((m, v) => (Math.abs(v.x - x) < Math.abs(m.x - x) ? v : m)); return q.sc; };
-    const zones = [band(0, h), band(S_ - h, S_)];
-    if (p.P > 0) { const s4 = sAtX(L / 4); zones.push(band(s4 - h, s4 + h)); }
-    if (p.appuis === 'arc-3art') { const s2 = sAtX(L / 2); zones.push(band(s2 - h, s2 + h)); }
     const yAt = x => { const q = smp.reduce((m, v) => (Math.abs(v.x - x) < Math.abs(m.x - x) ? v : m)); return q.y + h / 2; };
     const sups = model.nodes.filter(n => n.sup !== 'libre').map(n => Object.assign({}, n, { sy: n.y - h / 2 }));
     // vérification : charge funiculaire → trajectoires de compression parallèles à l'axe
@@ -550,10 +546,10 @@
       dev = Math.max(dev, Math.min(d, Math.PI - d) * 180 / Math.PI);
     });
     const checks = [funi
-      ? { label: 'Charge funiculaire : trajectoires de compression parallèles à l\'axe (écart maximal hors zones)', val: `${S.fmt(dev, 2)}°`, ok: dev < 1 }
-      : { label: 'Charge non funiculaire : écart des trajectoires de compression à l\'axe (hors zones)', val: `${S.fmt(dev, 1)}°`, ok: true },
+      ? { label: 'Charge funiculaire : trajectoires de compression parallèles à l\'axe (écart maximal à plus d\'une épaisseur des appuis)', val: `${S.fmt(dev, 2)}°`, ok: dev < 1 }
+      : { label: 'Charge non funiculaire : écart des trajectoires de compression à l\'axe (loin des appuis)', val: `${S.fmt(dev, 1)}°`, ok: true },
       { label: 'Excentricité maximale de la ligne des pressions e = M/N (noyau central : h/6)', val: `${S.fmt(eMax * 100, 1)} cm / ${S.fmt(h / 6 * 100, 1)} cm`, ok: eMax <= h / 6 + 1e-9 }];
-    return { F, zones: zones.filter(Boolean), outline, supports: sups, h, L, dsep: d => Math.max(h / (d * 0.28), L / 300),
+    return { F, outline, supports: sups, h, L, dsep: d => Math.max(h / (d * 0.28), L / 300),
       hinges: p.appuis === 'arc-3art' ? [[L / 2, p.f]] : [],
       loads: { q: p.q, topFn: yAt, x0: 0, x1: p.charge === 'demi' ? L / 2 : L, P: p.P > 0 ? [[L / 4, p.P]] : [] }, checks,
       info: eMax > h / 6 ? 'la ligne des pressions sort du noyau central : une fibre est tendue' : 'ligne des pressions dans le noyau central : section entièrement comprimée' };
@@ -578,9 +574,9 @@
       F.sx[k] = t[0]; F.sy[k] = t[1]; F.txy[k] = t[2];
     }
     F.cell.fill(1);
-    // zones de perturbation (Saint-Venant) : une hauteur h de part et d'autre des appuis et des charges ponctuelles
+    // zones de perturbation (Saint-Venant, une hauteur h autour des appuis et des charges) : non dessinées, mais exclues des vérifications
     const zones = [...xsup.filter((x, k) => sups[k] !== 'libre'), ...xP].map(x => [Math.max(0, x - h), Math.min(L, x + h)]);
-    return { F, zones, outline: [[[0, -h / 2], [L, -h / 2], [L, h / 2], [0, h / 2]]], supports: nodes.filter(n => n.sup !== 'libre'),
+    return { F, outline: [[[0, -h / 2], [L, -h / 2], [L, h / 2], [0, h / 2]]], supports: nodes.filter(n => n.sup !== 'libre'),
       loads: { q: p.q, top: h / 2, x0: 0, x1: L, P: xP.map(x => [x, p.P]) }, forces: f, h, L,
       checks: beamChecks(F, f, p, zones) };
   }
@@ -632,12 +628,6 @@
         });
         flush();
       });
-    });
-    // zones de perturbation : rectangles [x0, x1] sur toute la hauteur (poutres) ou polygones (arc)
-    const zonePoly = poly => 'M' + poly.map(p => `${X(p[0]).toFixed(1)} ${Y(p[1]).toFixed(1)}`).join('L') + 'Z';
-    (c.zones || []).forEach(z => {
-      const attrs = Array.isArray(z[0]) ? { d: zonePoly(z) } : { d: zonePoly([[z[0], -c.h / 2], [z[1], -c.h / 2], [z[1], c.h / 2], [z[0], c.h / 2]]) };
-      g.append(sv('path', Object.assign(attrs, { fill: 'url(#lc-hatch)', class: 'lc-zone' }), sv('title', {}, 'Zone de perturbation : théorie des poutres non valable ici')));
     });
     if (c.extra) g.append(c.extra(X, Y, k));
     // appuis et charges
@@ -696,14 +686,15 @@
       const c = CASES[st.cas].build(params[st.cas]);
       dom.out.innerHTML = '';
       if (c.error) { dom.out.append(el('p', { class: 'note' }, c.error)); return; }
-      const F = c.F, span = Math.max(F.x1 - F.x0, F.y1 - F.y0), dsep = c.dsep ? c.dsep(st.dens) : span / (st.dens * 2.2);
+      // espacement des lignes : fixé par la plus petite dimension (hauteur d'une poutre élancée), borné pour rester lisible
+      const F = c.F, span = Math.max(F.x1 - F.x0, F.y1 - F.y0), thin = Math.min(F.x1 - F.x0, F.y1 - F.y0);
+      const dsep = c.dsep ? c.dsep(st.dens) : Math.max(span / 260, Math.min(span / (st.dens * 2.2), thin / (st.dens * 0.34)));
       let smax = 0;
       for (let k = 0; k < F.sx.length; k++) smax = Math.max(smax, Math.abs(F.sx[k]), Math.abs(F.sy[k]), Math.abs(F.txy[k]));
       c.lines = { 1: st.fam1 ? trajectories(F, 1, dsep, { seeds: c.seeds && c.seeds.slice() }) : [], 2: st.fam2 ? trajectories(F, 2, dsep, { seeds: c.seeds && c.seeds.slice() }) : [] };
       dom.out.append(drawCase(c, { fam1: st.fam1, fam2: st.fam2, smax }));
       dom.out.append(el('div', { class: 'lc-legend' },
         el('span', { class: 'k c' }, 'compression'), el('span', { class: 'k t' }, 'traction'),
-        c.zones && c.zones.length ? el('span', { class: 'k z' }, 'théorie des poutres non valable ici (zone de perturbation, largeur ≈ h)') : null,
         ...(c.legend || [])));
       dom.checks.innerHTML = '';
       if (c.checks && c.checks.length) dom.checks.append(el('table', { class: 'tbl lc-checks' }, el('tbody', {}, c.checks.map(ch =>
