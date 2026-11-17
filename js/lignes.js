@@ -202,8 +202,12 @@
         ['q', 'Charge répartie en tête', 0, 300, 5, 60, 'kN/m'], ['P', 'Charge ponctuelle en tête', 0, 1000, 10, 0, 'kN'], ['xP', 'Position de P', 0, 14, 0.1, 3.1, 'm'],
         ['pp', 'Poids propre', 0, 0, 0, 'oui', '', [['oui', 'Pris en compte'], ['non', 'Ignoré']]],
         ['carte', 'Carte de couleur', 0, 0, 0, 'aucune', '', [['aucune', 'Aucune'], ['s1', 'σ₁ (traction en rouge)'], ['s2', 'σ₂ (compression en bleu)']]],
-        ['ne', 'Finesse du maillage (éléments)', 500, 4000, 100, 2000, '']],
-      hide: p => [...(p.nOuv === '0' ? ['o1x', 'o1y', 'o1w', 'o1h'] : []), ...(p.nOuv !== '2' ? ['o2x', 'o2y', 'o2w', 'o2h'] : [])],
+        ['ne', 'Finesse du maillage (éléments)', 500, 4000, 100, 2000, ''],
+        ['ft', 'Maçonnerie : résistance en traction ft', 0, 500, 10, 100, 'kPa'],
+        ['calc', 'Maçonnerie : calcul', 0, 0, 0, 'elas', '', [['elas', 'Élastique, zones σ₁ > ft surlignées'], ['nt', 'Sans traction (itératif, indicatif)']]],
+        ['arc60', 'Maçonnerie : arc de décharge à 60°', 0, 0, 0, 'oui', '', [['oui', 'Superposer'], ['non', 'Masquer']]],
+        ['nit', 'Maçonnerie : itérations maximales', 3, 40, 1, 25, '']],
+      hide: p => [...(p.nOuv === '0' ? ['o1x', 'o1y', 'o1w', 'o1h'] : []), ...(p.nOuv !== '2' ? ['o2x', 'o2y', 'o2w', 'o2h'] : []), ...(p.mat === 'beton' ? ['ft', 'calc', 'arc60', 'nit'] : p.calc === 'nt' ? [] : ['nit'])],
       build: p => voileCase(p)
     }
   };
@@ -231,8 +235,8 @@
     }
     return K;
   }
-  // Cholesky en bande : A[i][k] stocké en A[i·(bw+1) + k], k = j − i ∈ [0, bw]
-  function bandSolve(A, n, bw, F) {
+  // Cholesky en bande (LDLᵀ) : A[i][k] stocké en A[i·(bw+1) + k], k = j − i ∈ [0, bw] ; factorisation en place
+  function bandFactor(A, n, bw) {
     const W = bw + 1;
     for (let i = 0; i < n; i++) {
       for (let k = Math.max(0, i - bw); k < i; k++) {
@@ -243,12 +247,13 @@
         for (let j = i; j <= jmax; j++) A[i * W + (j - i)] -= f * A[k * W + (j - k)];
       }
     }
-    const x = Float64Array.from(F);
+  }
+  function bandSub(A, n, bw, F) {
+    const W = bw + 1, x = Float64Array.from(F);
     for (let i = 0; i < n; i++) { for (let k = Math.max(0, i - bw); k < i; k++) x[i] -= A[k * W + (i - k)] / A[k * W] * x[k]; }
     for (let i = n - 1; i >= 0; i--) { let s = x[i]; for (let j = i + 1; j <= Math.min(n - 1, i + bw); j++) s -= A[i * W + (j - i)] * x[j]; x[i] = s / A[i * W]; }
     return x;
   }
-
   /* Maillage régulier nx × ny ; une maille est retirée si son centre tombe dans une ouverture. Pied encastré
      (déplacements nuls), charges en tête et poids propre. Retourne les contraintes par élément. */
   function solveWall(geo, Dfor) {
@@ -278,23 +283,40 @@
     for (let i = 0; i < nx; i++) if (active[(ny - 1) * nx + i]) { F[2 * nid(i, ny) + 1] -= q * a / 2; F[2 * nid(i + 1, ny) + 1] -= q * a / 2; }
     if (P) F[2 * nid(Math.max(0, Math.min(nx, Math.round(xP / a))), ny) + 1] -= P;
     // conditions aux limites : pied bloqué, nœuds sans matière neutralisés
-    const fix = d => { for (let k = 1; k < Wd; k++) K[d * Wd + k] = 0; for (let r = Math.max(0, d - bw); r < d; r++) K[r * Wd + (d - r)] = 0; K[d * Wd] = 1; F[d] = 0; };
+    const fixed = [];
+    const fix = d => { for (let k = 1; k < Wd; k++) K[d * Wd + k] = 0; for (let r = Math.max(0, d - bw); r < d; r++) K[r * Wd + (d - r)] = 0; K[d * Wd] = 1; F[d] = 0; fixed.push(d); };
     for (let i = 0; i <= nx; i++) { fix(2 * nid(i, 0)); fix(2 * nid(i, 0) + 1); }
     for (let n = 0; n < nn; n++) if (!used[n]) { fix(2 * n); fix(2 * n + 1); }
     const Fext = Float64Array.from(F);
-    const u = bandSolve(K, ndof, bw, F);
-    // contraintes au centre de chaque élément
-    const B0 = bMat(a, b, 0, 0), sig = new Float64Array(nx * ny * 3);
-    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
-      const e = j * nx + i;
-      if (!active[e]) continue;
-      const ue = conn(i, j).flatMap(n => [u[2 * n], u[2 * n + 1]]), D = Dfor(e);
-      const ex = B0.slice(0, 8).reduce((s, v, k) => s + v * ue[k], 0), ey = B0.slice(8, 16).reduce((s, v, k) => s + v * ue[k], 0), gxy = B0.slice(16).reduce((s, v, k) => s + v * ue[k], 0);
-      sig[3 * e] = D[0] * ex + D[1] * ey + D[2] * gxy; sig[3 * e + 1] = D[3] * ex + D[4] * ey + D[5] * gxy; sig[3 * e + 2] = D[6] * ex + D[7] * ey + D[8] * gxy;
-    }
+    bandFactor(K, ndof, bw);
+    const B0 = bMat(a, b, 0, 0), dofsOf = (i, j) => conn(i, j).flatMap(n => [2 * n, 2 * n + 1]);
+    /* Résolution avec contraintes initiales σ0 (méthode des contraintes initiales) : K·u = F + Σ B0ᵀ·σ0·a·b·t,
+       puis σ = D·B0·u − σ0 au centre de chaque élément. La matrice n'est factorisée qu'une fois. */
+    const run = sig0 => {
+      const Fr = Float64Array.from(Fext);
+      if (sig0) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+        const e = j * nx + i;
+        if (!active[e] || !(sig0[3 * e] || sig0[3 * e + 1] || sig0[3 * e + 2])) continue;
+        dofsOf(i, j).forEach((d, k) => { Fr[d] += (B0[k] * sig0[3 * e] + B0[8 + k] * sig0[3 * e + 1] + B0[16 + k] * sig0[3 * e + 2]) * a * b * t; });
+      }
+      fixed.forEach(d => (Fr[d] = 0));
+      const u = bandSub(K, ndof, bw, Fr), sig = new Float64Array(nx * ny * 3);
+      for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+        const e = j * nx + i;
+        if (!active[e]) continue;
+        const ue = dofsOf(i, j).map(d => u[d]), D = Dfor(e);
+        let ex = 0, ey = 0, gxy = 0;
+        for (let k = 0; k < 8; k++) { ex += B0[k] * ue[k]; ey += B0[8 + k] * ue[k]; gxy += B0[16 + k] * ue[k]; }
+        sig[3 * e] = D[0] * ex + D[1] * ey + D[2] * gxy - (sig0 ? sig0[3 * e] : 0);
+        sig[3 * e + 1] = D[3] * ex + D[4] * ey + D[5] * gxy - (sig0 ? sig0[3 * e + 1] : 0);
+        sig[3 * e + 2] = D[6] * ex + D[7] * ey + D[8] * gxy - (sig0 ? sig0[3 * e + 2] : 0);
+      }
+      return { sig, u };
+    };
+    const { sig, u } = run(null);
     let load = 0;
     for (let n = 0; n < nn; n++) if (used[n]) load -= Fext[2 * n + 1];
-    return { sig, u, load, a, b };
+    return { sig, u, load, a, b, run };
   }
 
   function voileCase(p) {
@@ -312,7 +334,66 @@
     const D0 = dElastic(E, nu);
     const geo = { W, H, t, nx, ny, active, q: p.q, P: p.P, xP: Math.min(p.xP, W), gamma };
     const res = solveWall(geo, () => D0);
-    return wallResult(p, geo, res, ops, { E, nu, beton });
+    if (beton) return wallResult(p, geo, res, ops, { E, nu, beton });
+    return masonry(p, geo, res, ops, { E, nu, beton, D0 });
+  }
+
+  /* Maçonnerie : (1) calcul élastique, éléments où σ1 > ft surlignés, arc de décharge forfaitaire à 60° ;
+     (2) option « sans traction » par la méthode des contraintes initiales (Zienkiewicz, 1968) : à chaque
+     itération, la traction en excès de ft de chaque élément est retirée (σ0 += partie positive dans les axes
+     principaux) et réappliquée comme forces nodales ; la raideur élastique, factorisée une fois, est réutilisée. */
+  function masonry(p, geo, res0, ops, mat) {
+    const { nx, ny, active } = geo, ne = nx * ny, ft = p.ft;
+    // tolérance de convergence : 2 % de la compression moyenne (et au moins 1 kPa)
+    const sref = (p.q * geo.W + (p.P || 0)) / (geo.t * geo.W) + (geo.gamma || 0) * geo.H, tol = Math.max(0.02 * sref, 1);
+    let res = res0;
+    const hist = [], cracked = new Uint8Array(ne);
+    if (p.calc === 'nt') {
+      const sig0 = new Float64Array(ne * 3);
+      for (let it = 1; it <= p.nit; it++) {
+        let exMax = 0, nCr = 0;
+        for (let e = 0; e < ne; e++) {
+          if (!active[e]) continue;
+          const pr = principal([res.sig[3 * e], res.sig[3 * e + 1], res.sig[3 * e + 2]]);
+          const c = Math.cos(pr.th), s = Math.sin(pr.th);
+          const x1 = Math.max(0, pr.s1 - ft), x2 = Math.max(0, pr.s2 - ft);   // excès de traction (axes principaux)
+          if (x1 > 0 || x2 > 0) {
+            // tenseur d'excès x1·n1⊗n1 + x2·n2⊗n2, n1 = (c, s), n2 = (−s, c)
+            sig0[3 * e] += x1 * c * c + x2 * s * s; sig0[3 * e + 1] += x1 * s * s + x2 * c * c; sig0[3 * e + 2] += (x1 - x2) * c * s;
+            exMax = Math.max(exMax, x1, x2);
+          }
+          if (sig0[3 * e] || sig0[3 * e + 1] || sig0[3 * e + 2]) { cracked[e] = 1; nCr++; }
+        }
+        hist.push({ it, nCr, exMax });
+        if (exMax < tol) break;
+        const r = res0.run(sig0);
+        res = Object.assign({}, res0, { sig: r.sig, u: r.u });
+      }
+    }
+    const last = hist[hist.length - 1];
+    const out = wallResult(p, geo, res, ops, mat, {
+      overlay: (X, Y) => {
+        const g = sv('g');
+        const a = res.a, b = res.b;
+        for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+          const e = j * nx + i;
+          if (!active[e]) continue;
+          const pr = principal([res0.sig[3 * e], res0.sig[3 * e + 1], res0.sig[3 * e + 2]]);
+          const hot = p.calc === 'nt' ? cracked[e] : pr.s1 > ft;
+          if (hot) g.append(sv('rect', { x: X(i * a).toFixed(1), y: Y((j + 1) * b).toFixed(1), width: (X(a) - X(0) + 0.6).toFixed(1), height: (Y(0) - Y(b) + 0.6).toFixed(1), class: 'lc-crack' }));
+        }
+        if (p.arc60 === 'oui') ops.forEach(([ox, oy, ow, oh]) => {
+          const yt = oy + oh, ya = Math.min(geo.H, yt + ow / 2 * Math.tan(Math.PI / 3));
+          g.append(sv('path', { class: 'lc-arc60', d: `M${X(ox)} ${Y(yt)} L${X(ox + ow / 2)} ${Y(ya)} L${X(ox + ow)} ${Y(yt)}` }));
+        });
+        return g;
+      },
+      legend: [el('span', { class: 'k m' }, p.calc === 'nt' ? 'éléments fissurés : la traction au-delà de ft y a été retirée et redistribuée' : `zones où σ₁ > ft = ${S.fmt(ft, 0)} kPa (la maçonnerie ne les reprend pas)`),
+        p.arc60 === 'oui' ? el('span', { class: 'k a' }, 'arc de décharge forfaitaire à 60°') : null],
+      checks: p.calc === 'nt' && hist.length ? [{ label: `Sans traction : traction en excès de ft à chaque itération (${hist.length} itérations, tolérance ${S.fmt(tol, 0)} kPa) — ${hist.filter((h, k) => k < 4 || k === hist.length - 1).map(h => S.fmt(h.exMax, 0)).join(' → ')} kPa`, val: `${last.nCr} éléments fissurés`, ok: last.exMax < tol }] : [],
+      info: p.calc === 'nt' ? 'maçonnerie sans traction : résultat indicatif' : 'maçonnerie, calcul élastique'
+    });
+    return out;
   }
 
   // champ aux nœuds (moyenne des éléments voisins), carte de couleur, vérifications

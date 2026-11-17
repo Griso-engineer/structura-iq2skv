@@ -800,3 +800,5 @@ svg.icon .hid { stroke: none; fill: none; }
 .lc-h { font-size: 15px; margin: 18px 0 6px; }
 .lc-checks td { font-size: 12.5px; } .lc-checks td.ok { color: #2f8a4c; font-weight: 700; } .lc-checks td.ko { color: var(--c-red); font-weight: 700; }
 .lc-svg .lc-hinge { fill: var(--paper); stroke: var(--ink); stroke-width: 1.5; }
+.lc-svg .lc-crack { fill: rgba(226, 70, 63, .22); stroke: none; }
+.lc-svg .lc-arc60 { fill: none; stroke: #b0781f; stroke-width: 2; stroke-dasharray: 6 4; }
