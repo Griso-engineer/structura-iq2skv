@@ -12,6 +12,7 @@
     ordres: '<svg viewBox="0 0 180 70"><path d="M4 64 H176"/><path d="M14 64 V50 M44 64 V36 M74 64 V44 M104 64 V18 M134 64 V30 M164 64 V8" stroke-width="7"/></svg>',
     contreventement: '<svg viewBox="0 0 180 70"><path d="M66 66 V6 H114 V66 M66 36 H114"/><path d="M66 66 L114 36 M66 36 L114 66 M66 36 L114 6 M66 6 L114 36" stroke="#4284f4"/><path d="M16 20 h32 m-6 -4 l6 4 l-6 4 M16 46 h32 m-6 -4 l6 4 l-6 4"/></svg>',
     lignes: '<svg viewBox="0 0 180 70"><path d="M6 18 H174 V52 H6 Z"/><path d="M10 50 Q90 0 170 50" stroke="#2f6fd6"/><path d="M10 22 Q90 70 170 22" stroke="#e2463f"/></svg>',
+    plaques: '<svg viewBox="0 0 180 70"><path d="M40 12 H140 V58 H40 Z" fill="#eceae4"/><path d="M40 58 H140 M40 12 V58" stroke-width="5"/><path d="M40 12 H140 M140 12 V58" stroke-dasharray="5 4"/><path d="M90 35 m-14 0 a14 9 0 1 0 28 0 a14 9 0 1 0 -28 0" stroke="#4284f4"/></svg>',
     carbone: '<svg viewBox="0 0 180 70"><path d="M4 64 H176"/><path d="M20 14 H150" stroke-width="9" stroke="#8c8b86"/><path d="M20 34 H96" stroke-width="9" stroke="#4284f4"/><path d="M20 54 H62" stroke-width="9" stroke="#ffca7d"/><path d="M20 6 V64"/></svg>'
   };
 
@@ -30,7 +31,8 @@
         card('04', 'ordres', 'Ordres de grandeur', 'Portées et élancements par matériau, matériaux, charges permanentes et d\'exploitation.'),
         card('05', 'contreventement', 'Comprendre le contreventement', 'Pourquoi et comment stabiliser une structure vis-à-vis du vent et du séisme.'),
         card('06', 'carbone', 'Comparateur carbone', 'Plancher, poutre, poteau : comparer l\'empreinte carbone des solutions béton, acier et bois.'),
-        card('07', 'lignes', 'Lignes de contraintes', 'Voir cheminer la compression et la traction dans une poutre, un arc ou un voile percé.'))));
+        card('07', 'lignes', 'Lignes de contraintes', 'Voir cheminer la compression et la traction dans une poutre, un arc ou un voile percé.'),
+        card('08', 'plaques', 'Plaques', 'Flèches et contraintes de plaques acier appuyées sur 2, 3 ou 4 côtés, d\'après les tableaux de Roark.'))));
   };
 
   // ------------------------------------------------------------------ routeur

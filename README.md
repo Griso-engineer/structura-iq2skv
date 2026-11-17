@@ -1,6 +1,6 @@
 # Structura — atelier en ligne de conception des structures
 
-Application web statique (HTML/CSS/JavaScript, sans dépendance ni étape de build) en sept modules :
+Application web statique (HTML/CSS/JavaScript, sans dépendance ni étape de build) en huit modules :
 
 | Module | Contenu |
 |---|---|
@@ -11,6 +11,7 @@ Application web statique (HTML/CSS/JavaScript, sans dépendance ni étape de bui
 | **Comprendre le contreventement** | Phénomènes animés (mécanismes en élévation et en toiture, remèdes), trajet des efforts, typologies de contreventement. |
 | **Comparateur carbone** | Plancher, poutre, poteau : sections modifiables, fiches INIES au choix, ACV statique A1–A3 et stockage biogénique en ACV dynamique RE2020. |
 | **Lignes de contraintes** | Trajectoires des contraintes principales dans des poutres, un arc et un voile ou mur percé (élastique ou maçonnerie sans traction). |
+| **Plaques** | Plaques rectangulaires en acier appuyées sur 2, 3 ou 4 côtés (appuis simples, encastrements, bords libres) : contraintes, flèches et réactions d'après Roark (tableau 11.4), effet de membrane en grandes flèches (§ 11.11). |
 
 ## Lancer en local
 
@@ -44,6 +45,7 @@ La navigation utilise des ancres (`#/solveur`), donc aucune règle de réécritu
 | `js/contreventement.js` | Onglet Comprendre le contreventement |
 | `js/carbone.js` | Comparateur carbone (fiches INIES, ACV statique et dynamique) |
 | `js/lignes.js` | Lignes de contraintes : champ de contraintes, trajectoires, éléments finis Q4 du voile |
+| `js/plaques.js` | Plaques : coefficients de Roark (tableau 11.4), interpolation, grandes flèches |
 | `js/presets.js` | Modèles paramétriques du solveur |
 | `js/draw.js` | Rendu SVG du modèle, des charges, réactions et diagrammes |
 | `js/solver-ui.js` | Interface du solveur |
@@ -71,6 +73,20 @@ Trajectoires des contraintes principales : compression en bleu, traction en roug
 | Mur maçonné | Élastique avec zones σ1 > ft surlignées et arc de décharge forfaitaire à 60° ; option « sans traction » par la méthode des contraintes initiales (Zienkiewicz, 1968) : la traction en excès de ft est retirée et réappliquée en forces nodales jusqu'à convergence | Excès de traction résiduel sous 2 % de la compression moyenne ; nombre d'éléments fissurés |
 
 Tracé : intégration de Runge-Kutta 4 dans le champ de directions (signe du vecteur propre aligné sur le pas précédent), espacement régulier des lignes selon Jobard et Lefer, arrêt aux points singuliers (σ1 ≈ σ2). Les zones de perturbation (une hauteur h autour des appuis et des charges concentrées), où la théorie des poutres ne s'applique pas, sont hachurées.
+
+## Plaques (Roark)
+
+Formules de W. C. Young et R. G. Budynas, *Roark's Formulas for Stress and Strain*, chapitre 11 : σ = β·q·b²/t², y = α·q·b⁴/(E·t³), R = γ·q·b, coefficients du tableau 11.4 interpolés linéairement en a/b (linéairement en b/a vers a/b = ∞).
+
+| Appuis | Cas de Roark | Charges |
+|---|---|---|
+| 4 côtés | 1 (4 appuis simples), 3 et 4 (un côté encastré), 5 et 6 (deux côtés opposés encastrés), 8 (4 encastrés), 9 (3 encastrés, 1 appuyé) | uniforme ; charge concentrée au centre (1b, 8b) ; pressions variables (1d, 1e, 9d) |
+| 3 côtés | 2 (3 appuis simples, 1 bord libre), 7 (encastré, opposé libre, 2 appuis), 10 (3 encastrés, 1 bord libre) | uniforme ; pressions variables (2d, 7d, 10d) |
+| 2 côtés | 11 (2 côtés adjacents encastrés) ; deux côtés opposés (appuyés, encastrés, ou un de chaque) en flexion cylindrique | uniforme |
+
+Grandes flèches (cas 1 et 8 sous pression uniforme, bords retenus dans leur plan) : relation α·Q = w + k·w³ (w = y/t, Q = q·b⁴/E·t⁴), tangente à l'origine égale à la théorie linéaire et k ajusté sur le tableau du § 11.11 ; contrainte totale s(w) ajustée de la même façon.
+
+Vérifications intégrées : coefficients des plaques carrées simplement appuyées et encastrées comparés à Timoshenko (flèche et moments, écart < 0,3 %), limites a/b → ∞ égales à la flexion cylindrique, cas 7 tendant vers la console.
 
 ## Avertissement
 
