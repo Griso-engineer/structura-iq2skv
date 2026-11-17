@@ -781,3 +781,21 @@ svg.icon .hid { stroke: none; fill: none; }
 .co2-chart .co2-dynmark { stroke: #2f8a4c; stroke-width: 2; }
 .co2-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } .co2-dyncell b { color: #2f8a4c; } .co2-dyncell small { display: block; font-size: 11px; color: #2f8a4c; }
 .co2-tbl td:first-child { min-width: 120px; } .co2-tbl td.qty { min-width: 130px; font-size: 11.5px; } .co2-tbl th { white-space: normal; }
+/* Lignes de contraintes */
+.lc-svg { width: 100%; height: auto; display: block; }
+.lc-svg .lc-body { fill: #f3f2ee; stroke: var(--ink); stroke-width: 1.4; }
+.lc-svg .lc-hole { fill: var(--paper); stroke: var(--ink); stroke-width: 1.2; }
+.lc-svg .lc-line { fill: none; stroke-width: 1.3; stroke-linejoin: round; stroke-linecap: round; }
+.lc-svg .lc-line.c { stroke: #2f6fd6; } .lc-svg .lc-line.t { stroke: #e2463f; }
+.lc-svg .lc-zone { stroke: #9a9994; stroke-width: .8; fill-opacity: 1; opacity: .75; }
+.lc-svg .lc-sup { fill: var(--paper); stroke: var(--ink); stroke-width: 1.4; }
+.lc-svg .lc-load { fill: none; stroke: var(--load); stroke-width: 1.2; } .lc-svg .lc-loadP { fill: none; stroke: var(--load); stroke-width: 2.2; }
+.lc-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12px; margin: 8px 0 4px; }
+.lc-legend .k::before { content: ''; display: inline-block; width: 22px; height: 0; border-top: 2.5px solid; vertical-align: middle; margin-right: 6px; }
+.lc-legend .k.c::before { border-color: #2f6fd6; } .lc-legend .k.t::before { border-color: #e2463f; }
+.lc-legend .k.z::before { height: 10px; border: 1px solid #9a9994; background: repeating-linear-gradient(45deg, #9a9994 0 1px, transparent 1px 5px); }
+.lc-legend .k.m::before { height: 10px; border: 1px solid var(--c-red); background: rgba(226, 70, 63, .25); }
+.lc-legend .k.a::before { border-top: 2px dashed #b0781f; }
+.lc-warn { margin: -6px 0 18px; }
+.lc-h { font-size: 15px; margin: 18px 0 6px; }
+.lc-checks td { font-size: 12.5px; } .lc-checks td.ok { color: #2f8a4c; font-weight: 700; } .lc-checks td.ko { color: var(--c-red); font-weight: 700; }
